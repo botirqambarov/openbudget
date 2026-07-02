@@ -1,0 +1,14 @@
+{
+  "name": "openbudget-platform",
+  "version": "1.0.0",
+  "description": "Enterprise Open Budget Telegram Bot & Admin Platform",
+  "main": "backend/dist/main.js",
+  "scripts": {
+    "build": "cd backend && npm install && npm run build",
+    "start": "cd backend && npm run start",
+    "build:frontend": "cd frontend && npm install && npm run build"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
