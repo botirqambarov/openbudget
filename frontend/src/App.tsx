@@ -66,12 +66,12 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'projects' | 'users' | 'withdrawals' | 'settings'>('dashboard');
   
   const [stats, setStats] = useState<StatsData>({
-    totalVotes: 1537,
-    todayVotes: 931,
+    totalVotes: 0,
+    todayVotes: 0,
     activeProjects: 4,
-    totalUsers: 245,
-    pendingWithdrawals: 3,
-    totalReferralExpense: 480000,
+    totalUsers: 0,
+    pendingWithdrawals: 0,
+    totalReferralExpense: 0,
     botBalance: 5000000
   });
 
@@ -83,7 +83,7 @@ export default function App() {
       telegramBotUrl: 'https://t.me/openbudget_navoiy_bot',
       pricePerVote: 5000,
       autoStopLimit: 5000,
-      currentVotes: 931,
+      currentVotes: 0,
       isActive: true
     },
     {
@@ -93,7 +93,7 @@ export default function App() {
       telegramBotUrl: 'https://t.me/openbudget_ilgor_bot',
       pricePerVote: 5000,
       autoStopLimit: 5000,
-      currentVotes: 429,
+      currentVotes: 0,
       isActive: true
     },
     {
@@ -103,7 +103,7 @@ export default function App() {
       telegramBotUrl: 'https://t.me/openbudget_sebiston1_bot',
       pricePerVote: 5000,
       autoStopLimit: 5000,
-      currentVotes: 57,
+      currentVotes: 0,
       isActive: true
     }
   ]);

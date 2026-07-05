@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { ViloyatItem, TumanItem, MahallaItem, UZBEKISTAN_LOCATIONS } from '../data/uzbekistan_locations';
 
 export interface ProjectData {
   id: string;
@@ -54,6 +55,7 @@ export interface SystemSettings {
   maxWithdrawal: number;
   paymentChannel: string;
   adminIds: number[];
+  referralText: string;
 }
 
 const DATA_FILE = path.join(__dirname, '../../database_state.json');
@@ -72,8 +74,10 @@ class StoreService {
     paymentChannel: '@openbudgettolovlari',
     adminIds: process.env.ADMIN_IDS 
       ? process.env.ADMIN_IDS.split(',').map(id => Number(id.trim())).filter(id => !isNaN(id))
-      : [123456789]
+      : [123456789],
+    referralText: "Sizning shaxsiy referal havolangiz"
   };
+  public locations: ViloyatItem[] = [...UZBEKISTAN_LOCATIONS];
 
   constructor() {
     this.initDefaultProjects();
@@ -92,7 +96,7 @@ class StoreService {
         telegramBotUrl: 'https://t.me/openbudget_navoiy_bot',
         pricePerVote: 5000,
         autoStopLimit: 5000,
-        currentVotes: 931,
+        currentVotes: 0,
         isActive: true,
         createdAt: new Date().toISOString()
       },
@@ -106,7 +110,7 @@ class StoreService {
         telegramBotUrl: 'https://t.me/openbudget_ilgor_bot',
         pricePerVote: 5000,
         autoStopLimit: 5000,
-        currentVotes: 429,
+        currentVotes: 0,
         isActive: true,
         createdAt: new Date().toISOString()
       },
@@ -120,7 +124,7 @@ class StoreService {
         telegramBotUrl: 'https://t.me/openbudget_sebiston1_bot',
         pricePerVote: 5000,
         autoStopLimit: 5000,
-        currentVotes: 57,
+        currentVotes: 0,
         isActive: true,
         createdAt: new Date().toISOString()
       },
@@ -134,7 +138,7 @@ class StoreService {
         telegramBotUrl: 'https://t.me/openbudget_sebiston2_bot',
         pricePerVote: 5000,
         autoStopLimit: 5000,
-        currentVotes: 120,
+        currentVotes: 0,
         isActive: true,
         createdAt: new Date().toISOString()
       }
@@ -149,7 +153,8 @@ class StoreService {
         votes: this.votes,
         usedPhones: Array.from(this.usedPhones),
         withdrawals: this.withdrawals,
-        settings: this.settings
+        settings: this.settings,
+        locations: this.locations
       };
       fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
     } catch (e) {
@@ -168,6 +173,7 @@ class StoreService {
         if (data.usedPhones) this.usedPhones = new Set(data.usedPhones);
         if (data.withdrawals) this.withdrawals = data.withdrawals;
         if (data.settings) this.settings = { ...this.settings, ...data.settings };
+        if (data.locations) this.locations = data.locations;
       }
     } catch (e) {
       console.error('Load state error:', e);
@@ -262,6 +268,48 @@ class StoreService {
 
   public getProjectByMahalla(mahallaId: string): ProjectData | undefined {
     return this.projects.find(p => p.mahallaId === mahallaId);
+  }
+
+  public findViloyat(viloyatId: string) {
+    return this.locations.find(v => v.id === viloyatId);
+  }
+
+  public findTuman(viloyatId: string, tumanId: string) {
+    const viloyat = this.findViloyat(viloyatId);
+    return viloyat?.tumans.find(t => t.id === tumanId);
+  }
+
+  public findMahalla(viloyatId: string, tumanId: string, mahallaId: string) {
+    const tuman = this.findTuman(viloyatId, tumanId);
+    return tuman?.mahallas.find(m => m.id === mahallaId);
+  }
+
+  public addMahalla(viloyatId: string, tumanId: string, name: string) {
+    const tuman = this.findTuman(viloyatId, tumanId);
+    if (tuman) {
+      const id = 'm_' + Date.now();
+      tuman.mahallas.push({ id, name });
+      this.saveState();
+    }
+  }
+
+  public deleteMahalla(viloyatId: string, tumanId: string, mahallaId: string) {
+    const tuman = this.findTuman(viloyatId, tumanId);
+    if (tuman) {
+      tuman.mahallas = tuman.mahallas.filter(m => m.id !== mahallaId);
+      this.saveState();
+    }
+  }
+
+  public editMahalla(viloyatId: string, tumanId: string, mahallaId: string, newName: string) {
+    const tuman = this.findTuman(viloyatId, tumanId);
+    if (tuman) {
+      const m = tuman.mahallas.find(m => m.id === mahallaId);
+      if (m) {
+        m.name = newName;
+        this.saveState();
+      }
+    }
   }
 }
 

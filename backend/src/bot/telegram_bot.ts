@@ -3,7 +3,6 @@ dotenv.config();
 
 import { Bot, InlineKeyboard, Keyboard, InputFile } from 'grammy';
 import { store, ProjectData } from '../services/store';
-import { UZBEKISTAN_LOCATIONS, findViloyat, findTuman, findMahalla } from '../data/uzbekistan_locations';
 
 const rawToken = process.env.BOT_TOKEN || '7890123456:AAEH_Mock_Token_OpenBudgetUz';
 const token = rawToken.replace(/['"]/g, '').trim();
@@ -11,7 +10,7 @@ export const bot = new Bot(token);
 
 // User session state tracking in memory
 interface UserSession {
-  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD';
+  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD' | 'ADMIN_ADD_MAHALLA' | 'ADMIN_EDIT_MAHALLA' | 'ADMIN_EDIT_REFERRAL';
   phone?: string;
   selectedViloyatId?: string;
   selectedTumanId?: string;
@@ -78,16 +77,19 @@ async function sendAdminDashboard(ctx: any) {
   const uptimeMins = Math.floor((process.uptime() % 3600) / 60);
   const uptimeSecs = Math.floor(process.uptime() % 60);
 
-  const statsText = `👥 <b>Returned users:</b> 11 (0.54%)\n` +
-    `💎 <b>Premium users:</b> 74 (3.62%)\n\n` +
-    `🗄 <b>Tasks:</b> 8\n` +
-    `💬 <b>Minutely requests:</b> 429\n` +
-    `💬 <b>Secondly requests:</b> 5\n\n` +
-    `🗳 <b>Daily votes:</b> 931\n\n` +
-    `📅 <b>Date:</b> ${new Date().toLocaleDateString('uz-UZ')} ${new Date().toLocaleTimeString()}\n` +
-    `⏳ <b>Uptime:</b> ${uptimeHours} hours, ${uptimeMins} minutes, ${uptimeSecs} seconds`;
+  const totalUsers = store.users.size;
+  const todayVotes = store.votes.filter(v => new Date(v.createdAt).toDateString() === new Date().toDateString()).length;
+  const totalVotes = store.votes.length;
+
+  const statsText = `📊 <b>Asosiy Statistika:</b>\n\n` +
+    `👥 <b>Jami foydalanuvchilar:</b> ${totalUsers} ta\n` +
+    `🗳 <b>Bugungi ovozlar:</b> ${todayVotes} ta\n` +
+    `🗳 <b>Jami ovozlar:</b> ${totalVotes} ta\n\n` +
+    `📅 <b>Sana:</b> ${new Date().toLocaleDateString('uz-UZ')} ${new Date().toLocaleTimeString()}\n` +
+    `⏳ <b>Uptime:</b> ${uptimeHours} soat, ${uptimeMins} daqiqa, ${uptimeSecs} soniya`;
 
   const inlineAdminMenu = new InlineKeyboard()
+    .text("🔗 Referal matnini tahrirlash", "admin_edit_referral").row()
     .text("Haftalik statistika 📊", "admin_weekly_stats");
 
   await ctx.reply(statsText, {
@@ -223,7 +225,8 @@ bot.hears("🔗 Referal ssilka", async (ctx) => {
 
   const text = `🔗 <b>Sizning shaxsiy referal havolangiz:</b>\n\n` +
     `<code>${refLink}</code>\n\n` +
-    `Ushbu havolani do'stlaringizga yuboring. Har bir muvaffaqiyatli ovoz bergan do'stingiz uchun <b>${store.settings.referralBonus.toLocaleString()} UZS</b> bonus olasiz!`;
+    `${store.settings.referralText}\n\n` +
+    `Har bir muvaffaqiyatli ovoz bergan do'stingiz uchun <b>${store.settings.referralBonus.toLocaleString()} UZS</b> bonus olasiz!`;
 
   await ctx.reply(text, { parse_mode: 'HTML' });
 });
@@ -292,6 +295,12 @@ bot.on('callback_query:data', async (ctx) => {
   if (data === 'user_add_card') {
     session.step = 'USER_ADD_CARD';
     await ctx.reply(`💳 <b>Yangi karta raqamingizni kiriting:</b>\n\nMisol: <code>8600123456789012</code>`, { parse_mode: 'HTML' });
+    return;
+  }
+
+  if (data === 'admin_edit_referral') {
+    session.step = 'ADMIN_EDIT_REFERRAL';
+    await ctx.reply(`🔗 <b>Yangi referal matnini kiriting:</b>\n\nJoriy matn: <i>${store.settings.referralText}</i>`, { parse_mode: 'HTML' });
     return;
   }
 
@@ -407,7 +416,7 @@ bot.on('callback_query:data', async (ctx) => {
   // Admin Add Project Wizard: Step 1 Select Viloyat
   if (data === 'admin_add_project') {
     const kb = new InlineKeyboard();
-    UZBEKISTAN_LOCATIONS.forEach(v => {
+    store.locations.forEach(v => {
       kb.text(v.name, `admin_select_v_${v.id}`).row();
     });
     kb.text("Bekor qilish 🚫", "admin_projects_list");
@@ -423,7 +432,7 @@ bot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('admin_select_v_')) {
     const vId = data.replace('admin_select_v_', '');
     session.adminAddViloyatId = vId;
-    const viloyat = findViloyat(vId);
+    const viloyat = store.findViloyat(vId);
 
     const kb = new InlineKeyboard();
     viloyat?.tumans.forEach(t => {
@@ -442,7 +451,7 @@ bot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('admin_select_t_')) {
     const tId = data.replace('admin_select_t_', '');
     session.adminAddTumanId = tId;
-    const tuman = findTuman(session.adminAddViloyatId!, tId);
+    const tuman = store.findTuman(session.adminAddViloyatId!, tId);
 
     const kb = new InlineKeyboard();
     tuman?.mahallas.forEach(m => {
@@ -474,7 +483,7 @@ bot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('user_v_')) {
     const vId = data.replace('user_v_', '');
     session.selectedViloyatId = vId;
-    const viloyat = findViloyat(vId);
+    const viloyat = store.findViloyat(vId);
 
     const kb = new InlineKeyboard();
     viloyat?.tumans.forEach(t => {
@@ -493,12 +502,18 @@ bot.on('callback_query:data', async (ctx) => {
   if (data.startsWith('user_t_')) {
     const tId = data.replace('user_t_', '');
     session.selectedTumanId = tId;
-    const tuman = findTuman(session.selectedViloyatId!, tId);
+    const tuman = store.findTuman(session.selectedViloyatId!, tId);
 
     const kb = new InlineKeyboard();
     tuman?.mahallas.forEach(m => {
       kb.text(m.name, `user_m_${m.id}`).row();
     });
+
+    if (isAdmin(userId)) {
+      kb.text("➕ Mahalla qo'shish", `adm_add_m_${tId}`).row();
+      kb.text("✏️ Mahallani tahrirlash", `adm_edit_mlist_${tId}`).row();
+      kb.text("🗑 Mahallani o'chirish", `adm_del_mlist_${tId}`).row();
+    }
 
     await ctx.editMessageText(
       `🏢 <b>Tuman:</b> ${tuman?.name}\n\n` +
@@ -508,12 +523,58 @@ bot.on('callback_query:data', async (ctx) => {
     return;
   }
 
+  // Admin Mahalla Actions
+  if (data.startsWith('adm_add_m_')) {
+    const tId = data.replace('adm_add_m_', '');
+    session.selectedTumanId = tId;
+    session.step = 'ADMIN_ADD_MAHALLA';
+    await ctx.reply("➕ <b>Yangi mahalla nomini kiriting:</b>", { parse_mode: 'HTML' });
+    return;
+  }
+
+  if (data.startsWith('adm_edit_mlist_')) {
+    const tId = data.replace('adm_edit_mlist_', '');
+    const tuman = store.findTuman(session.selectedViloyatId!, tId);
+    const kb = new InlineKeyboard();
+    tuman?.mahallas.forEach(m => {
+      kb.text(`✏️ ${m.name}`, `adm_edit_m_${m.id}`).row();
+    });
+    await ctx.editMessageText("✏️ <b>Qaysi mahallani tahrirlamoqchisiz?</b>", { parse_mode: 'HTML', reply_markup: kb });
+    return;
+  }
+
+  if (data.startsWith('adm_edit_m_')) {
+    const mId = data.replace('adm_edit_m_', '');
+    session.selectedMahallaId = mId;
+    session.step = 'ADMIN_EDIT_MAHALLA';
+    await ctx.reply("✏️ <b>Tanlangan mahalla uchun yangi nomni kiriting:</b>", { parse_mode: 'HTML' });
+    return;
+  }
+
+  if (data.startsWith('adm_del_mlist_')) {
+    const tId = data.replace('adm_del_mlist_', '');
+    const tuman = store.findTuman(session.selectedViloyatId!, tId);
+    const kb = new InlineKeyboard();
+    tuman?.mahallas.forEach(m => {
+      kb.text(`🗑 ${m.name}`, `adm_del_m_${m.id}`).row();
+    });
+    await ctx.editMessageText("🗑 <b>Qaysi mahallani o'chirmoqchisiz?</b>", { parse_mode: 'HTML', reply_markup: kb });
+    return;
+  }
+
+  if (data.startsWith('adm_del_m_')) {
+    const mId = data.replace('adm_del_m_', '');
+    store.deleteMahalla(session.selectedViloyatId!, session.selectedTumanId!, mId);
+    await ctx.editMessageText("🗑 <b>Mahalla muvaffaqiyatli o'chirildi!</b>", { parse_mode: 'HTML' });
+    return;
+  }
+
   // User Voting Flow: Mahalla Selection & Submission
   if (data.startsWith('user_m_')) {
     const mId = data.replace('user_m_', '');
     session.selectedMahallaId = mId;
 
-    const mahalla = findMahalla(session.selectedViloyatId!, session.selectedTumanId!, mId);
+    const mahalla = store.findMahalla(session.selectedViloyatId!, session.selectedTumanId!, mId);
     const project = store.getProjectByMahalla(mId);
 
     if (!project) {
@@ -559,6 +620,31 @@ bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
 
   if (["🗳 Ovoz berish", "💰 Balans", "📥 Pulni yechib olish", "🔗 Referal ssilka", "🎉 Aksiyalar", "💸 To'lovlar isboti", "Loyihalar 🔗", "Loyihalar", "👑 Admin Panel"].includes(text)) {
+    return;
+  }
+
+  // Step: ADMIN_EDIT_REFERRAL
+  if (session.step === 'ADMIN_EDIT_REFERRAL') {
+    store.settings.referralText = text;
+    store.saveState();
+    await ctx.reply(`✅ <b>Referal matni yangilandi!</b>\n\nJoriy matn:\n<i>${text}</i>`, { parse_mode: 'HTML' });
+    session.step = undefined;
+    return;
+  }
+
+  // Step: ADMIN_ADD_MAHALLA
+  if (session.step === 'ADMIN_ADD_MAHALLA' && session.selectedViloyatId && session.selectedTumanId) {
+    store.addMahalla(session.selectedViloyatId, session.selectedTumanId, text);
+    await ctx.reply(`✅ Yangi mahalla qo'shildi: <b>${text}</b>`, { parse_mode: 'HTML' });
+    session.step = undefined;
+    return;
+  }
+
+  // Step: ADMIN_EDIT_MAHALLA
+  if (session.step === 'ADMIN_EDIT_MAHALLA' && session.selectedViloyatId && session.selectedTumanId && session.selectedMahallaId) {
+    store.editMahalla(session.selectedViloyatId, session.selectedTumanId, session.selectedMahallaId, text);
+    await ctx.reply(`✅ Mahalla nomi tahrirlandi: <b>${text}</b>`, { parse_mode: 'HTML' });
+    session.step = undefined;
     return;
   }
 
@@ -619,7 +705,7 @@ bot.on('message:text', async (ctx) => {
     session.step = 'SELECT_VILOYAT';
 
     const kb = new InlineKeyboard();
-    UZBEKISTAN_LOCATIONS.forEach(v => {
+    store.locations.forEach(v => {
       kb.text(v.name, `user_v_${v.id}`).row();
     });
 
@@ -699,7 +785,7 @@ bot.on('message:text', async (ctx) => {
       return ctx.reply("⚠️ Iltimos, faqat raqam kiriting (masalan: 5000)!");
     }
 
-    const mahalla = findMahalla(session.adminAddViloyatId!, session.adminAddTumanId!, session.adminAddMahallaId!);
+    const mahalla = store.findMahalla(session.adminAddViloyatId!, session.adminAddTumanId!, session.adminAddMahallaId!);
     
     const newProj: ProjectData = {
       id: 'p_' + Date.now(),
