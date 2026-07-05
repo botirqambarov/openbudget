@@ -275,7 +275,6 @@ class StoreService {
     const user = this.users.get(req.userId);
     if (user) {
       user.phone = req.phone;
-      user.mainBalance += reward;
       user.totalEarned += reward;
 
       if (user.referrerId) {

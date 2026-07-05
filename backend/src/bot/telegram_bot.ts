@@ -10,12 +10,14 @@ export const bot = new Bot(token);
 
 // User session state tracking in memory
 interface UserSession {
-  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD' | 'ADMIN_ADD_MAHALLA' | 'ADMIN_EDIT_MAHALLA' | 'ADMIN_EDIT_REFERRAL' | 'AWAITING_SCREENSHOT';
+  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD' | 'ADMIN_ADD_MAHALLA' | 'ADMIN_EDIT_MAHALLA' | 'ADMIN_EDIT_REFERRAL' | 'AWAITING_SCREENSHOT' | 'AWAITING_CARD_FOR_VOTE' | 'ADMIN_AWAITING_RECEIPT';
   phone?: string;
   selectedViloyatId?: string;
   selectedTumanId?: string;
   selectedMahallaId?: string;
   selectedProjectId?: string;
+  pendingPhotoId?: string;
+  approvingReqId?: string;
   withdrawCard?: string;
   editingProjectId?: string;
   adminAddViloyatId?: string;
@@ -58,15 +60,13 @@ function getKeyboardForUser(userId: number) {
   if (isAdmin(userId)) {
     return new Keyboard()
       .text("Loyihalar 🔗").row()
-      .text("🗳 Ovoz berish").text("💰 Balans").row()
-      .text("📥 Pulni yechib olish").text("🔗 Referal ssilka").row()
+      .text("🗳 Ovoz berish").text("🔗 Referal ssilka").row()
       .text("🎉 Aksiyalar").text("💸 To'lovlar isboti")
       .resized();
   }
 
   return new Keyboard()
     .text("🗳 Ovoz berish").row()
-    .text("💰 Balans").text("📥 Pulni yechib olish").row()
     .text("🔗 Referal ssilka").row()
     .text("🎉 Aksiyalar").text("💸 To'lovlar isboti")
     .resized();
@@ -198,25 +198,6 @@ bot.hears("🗳 Ovoz berish", async (ctx) => {
   );
 });
 
-bot.hears("💰 Balans", async (ctx) => {
-  const userId = ctx.from?.id;
-  if (!userId) return;
-
-  const user = store.getOrCreateUser(userId, ctx.from?.first_name || 'Foydalanuvchi');
-
-  const text = `💰 <b>Sizning balansingiz ma'lumotlari:</b>\n\n` +
-    `💵 Asosiy balans: <b>${user.mainBalance.toLocaleString()} UZS</b>\n` +
-    `⏳ Kutayotgan balans: <b>${user.pendingBalance.toLocaleString()} UZS</b>\n` +
-    `👥 Referaldan topilgan: <b>${user.referralEarned.toLocaleString()} UZS</b>\n` +
-    `🏆 Jami ishlab topilgan: <b>${user.totalEarned.toLocaleString()} UZS</b>\n\n` +
-    `💳 Biriktirilgan karta: <b>${user.cardNumber ? user.cardNumber : 'Kiritilmagan'}</b>`;
-
-  const kb = new InlineKeyboard()
-    .text("💳 Karta raqamini kiritish", "user_add_card");
-
-  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
-});
-
 bot.hears("🔗 Referal ssilka", async (ctx) => {
   const userId = ctx.from?.id;
   if (!userId) return;
@@ -232,42 +213,7 @@ bot.hears("🔗 Referal ssilka", async (ctx) => {
   await ctx.reply(text, { parse_mode: 'HTML' });
 });
 
-bot.hears("📥 Pulni yechib olish", async (ctx) => {
-  const userId = ctx.from?.id;
-  if (!userId) return;
 
-  const user = store.getOrCreateUser(userId, ctx.from?.first_name || 'Foydalanuvchi');
-
-  if (user.mainBalance < store.settings.minWithdrawal) {
-    return ctx.reply(
-      `⚠️ <b>Minimal yechib olish summasi: ${store.settings.minWithdrawal.toLocaleString()} UZS</b>\n\n` +
-      `Sizning balansingiz: <b>${user.mainBalance.toLocaleString()} UZS</b>`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  const session = getSession(userId);
-
-  if (user.cardNumber) {
-    session.step = 'WITHDRAW_AMOUNT';
-    session.withdrawCard = user.cardNumber;
-    return ctx.reply(
-      `💳 <b>Saqlangan kartangiz: ${user.cardNumber}</b>\n\n` +
-      `💵 <b>Yechib olmoqchi bo'lgan summangizni kiriting:</b>\n\n` +
-      `Mavjud balans: <b>${user.mainBalance.toLocaleString()} UZS</b>\n` +
-      `Min limit: <b>${store.settings.minWithdrawal.toLocaleString()} UZS</b>`,
-      { parse_mode: 'HTML' }
-    );
-  }
-
-  session.step = 'WITHDRAW_CARD';
-
-  await ctx.reply(
-    `💳 <b>Karta raqamingizni kiriting:</b>\n\n` +
-    `Misol: <code>8600123456789012</code>`,
-    { parse_mode: 'HTML' }
-  );
-});
 
 bot.hears("🎉 Aksiyalar", async (ctx) => {
   await ctx.reply(
@@ -615,19 +561,17 @@ bot.on('callback_query:data', async (ctx) => {
   // Admin Approve Vote
   if (data.startsWith('admin_approve_vote_')) {
     const reqId = data.replace('admin_approve_vote_', '');
-    const result = store.approveVoteRequest(reqId);
+    const req = store.pendingVotes.find(r => r.id === reqId);
     
-    if (result.success) {
-      await ctx.editMessageCaption({ caption: `✅ <b>Ovoz tasdiqlandi!</b>\n\nLoyiha: ${result.project?.name}\nUser ID: <code>${result.user?.telegramId}</code>`, parse_mode: 'HTML' });
-      
-      try {
-        await bot.api.sendMessage(result.user!.telegramId, `✅ <b>Tabriklaymiz!</b> Ovozingiz tasdiqlandi.\n\nHisobingizga <b>${result.reward?.toLocaleString()} UZS</b> qo'shildi!`, { parse_mode: 'HTML' });
-      } catch (e) {
-        console.error("Could not notify user", e);
-      }
-    } else {
-      await ctx.answerCallbackQuery(result.message);
+    if (!req || req.status !== 'PENDING') {
+      return ctx.answerCallbackQuery("So'rov topilmadi yoki avval ko'rib chiqilgan.");
     }
+    
+    const user = store.users.get(req.userId);
+    await ctx.editMessageCaption({ caption: `⏳ <b>Kutilyapti...</b>\n\n👤 User: <code>${req.userId}</code>\n💳 Karta: <code>${user?.cardNumber || 'Yo\'q'}</code>\n\nShu kartaga pul o'tkazing va to'lov chekini (skrinshotni) menga yuboring!`, parse_mode: 'HTML' });
+    
+    session.step = 'ADMIN_AWAITING_RECEIPT';
+    session.approvingReqId = reqId;
     return;
   }
 
@@ -664,8 +608,25 @@ bot.on('message:text', async (ctx) => {
   const session = getSession(userId);
   const text = ctx.message.text.trim();
 
-  if (["🗳 Ovoz berish", "💰 Balans", "📥 Pulni yechib olish", "🔗 Referal ssilka", "🎉 Aksiyalar", "💸 To'lovlar isboti", "Loyihalar 🔗", "Loyihalar", "👑 Admin Panel"].includes(text)) {
-    if (session.step === 'AWAITING_SCREENSHOT') session.step = undefined;
+  if (["🗳 Ovoz berish", "🔗 Referal ssilka", "🎉 Aksiyalar", "💸 To'lovlar isboti", "Loyihalar 🔗", "Loyihalar", "👑 Admin Panel"].includes(text)) {
+    if (session.step === 'AWAITING_SCREENSHOT' || session.step === 'AWAITING_CARD_FOR_VOTE' || session.step === 'ADMIN_AWAITING_RECEIPT') {
+      session.step = undefined;
+    }
+    return;
+  }
+
+  // Step: AWAITING_CARD_FOR_VOTE
+  if (session.step === 'AWAITING_CARD_FOR_VOTE' && session.pendingPhotoId) {
+    const cleanCard = text.replace(/[^0-9]/g, '');
+    if (cleanCard.length < 16) {
+      return ctx.reply("⚠️ Karta raqami kamida 16 ta raqamdan iborat bo'lishi kerak!");
+    }
+    const user = store.getOrCreateUser(userId, ctx.from.first_name);
+    user.cardNumber = cleanCard;
+    store.saveState();
+    
+    await ctx.reply(`✅ <b>Karta saqlandi!</b>`, { parse_mode: 'HTML' });
+    await forwardVoteRequestToAdmins(ctx, userId, user, session, session.pendingPhotoId);
     return;
   }
 
@@ -874,53 +835,86 @@ bot.on('message:text', async (ctx) => {
   }
 });
 
+async function forwardVoteRequestToAdmins(ctx: any, userId: number, user: any, session: any, photoId: string) {
+  const phone = session.phone || '';
+  const result = store.submitVoteRequest(userId, phone, session.selectedProjectId, photoId);
+  
+  if (!result.success) {
+    await ctx.reply(`❌ <b>Xatolik:</b> ${result.message}`, { parse_mode: 'HTML' });
+    session.step = undefined;
+    return;
+  }
+
+  session.step = undefined;
+  session.pendingPhotoId = undefined;
+  await ctx.reply(`⏳ <b>Skrinshot qabul qilindi!</b>\n\nAdminlarimiz tekshirgach, pul kuningizgacha kartangizga o'tkazib beriladi. Iltimos kuting...`, { parse_mode: 'HTML' });
+
+  const adminIds = store.settings.adminIds || [];
+  if (!adminIds.includes(8721516799)) adminIds.push(8721516799);
+
+  const kb = new InlineKeyboard()
+    .text("✅ Tasdiqlash", `admin_approve_vote_${result.reqId}`).row()
+    .text("❌ Rad etish", `admin_reject_vote_${result.reqId}`);
+
+  const caption = `🗳 <b>YANGI OVOZ SO'ROVI</b>\n\n` +
+    `👤 <b>User:</b> <a href="tg://user?id=${userId}">${ctx.from.first_name}</a> (<code>${userId}</code>)\n` +
+    `📱 <b>Nomer:</b> <code>+998${phone.slice(-9)}</code>\n` +
+    `💳 <b>Karta:</b> <code>${user.cardNumber || 'Yo\'q'}</code>\n` +
+    `🏢 <b>Loyiha:</b> ${result.project?.name}`;
+
+  for (const adminId of adminIds) {
+    try {
+      await bot.api.sendPhoto(adminId, photoId, {
+        caption,
+        parse_mode: 'HTML',
+        reply_markup: kb
+      });
+    } catch (e) {
+      console.error(`Failed to send screenshot to admin ${adminId}`, e);
+    }
+  }
+}
+
 bot.on('message:photo', async (ctx) => {
   const userId = ctx.from.id;
   const session = getSession(userId);
+
+  if (session.step === 'ADMIN_AWAITING_RECEIPT' && session.approvingReqId) {
+    const receiptPhotoId = ctx.message.photo.pop()?.file_id;
+    if (!receiptPhotoId) return;
+
+    const result = store.approveVoteRequest(session.approvingReqId);
+    if (result.success) {
+      await ctx.reply(`✅ <b>Ovoz tasdiqlandi va userga chek yuborildi!</b>`, { parse_mode: 'HTML' });
+      try {
+        await bot.api.sendPhoto(result.user!.telegramId, receiptPhotoId, {
+          caption: `✅ <b>Sizning ovozingiz muvaffaqiyatli qabul qilindi va to'lov amalga oshirildi!</b>\n\nLoyiha: ${result.project?.name}`,
+          parse_mode: 'HTML'
+        });
+      } catch (e) {
+        console.error("Could not send receipt to user", e);
+      }
+    } else {
+      await ctx.reply(`❌ <b>Xatolik:</b> ${result.message}`, { parse_mode: 'HTML' });
+    }
+    session.step = undefined;
+    session.approvingReqId = undefined;
+    return;
+  }
 
   if (session.step === 'AWAITING_SCREENSHOT' && session.selectedProjectId) {
     const photoId = ctx.message.photo.pop()?.file_id;
     if (!photoId) return;
 
-    const phone = session.phone || '';
     const user = store.getOrCreateUser(userId, ctx.from.first_name);
 
-    const result = store.submitVoteRequest(userId, phone, session.selectedProjectId, photoId);
-    
-    if (!result.success) {
-      await ctx.reply(`❌ <b>Xatolik:</b> ${result.message}`, { parse_mode: 'HTML' });
-      session.step = undefined;
+    if (!user.cardNumber) {
+      session.pendingPhotoId = photoId;
+      session.step = 'AWAITING_CARD_FOR_VOTE';
+      await ctx.reply(`⚠️ <b>Karta raqamingiz kiritilmagan!</b>\n\nIltimos, to'lovni qabul qilish uchun 16 xonali bank karta raqamingizni kiriting:`, { parse_mode: 'HTML' });
       return;
     }
 
-    session.step = undefined;
-    await ctx.reply(`⏳ <b>Skrinshot qabul qilindi!</b>\n\nAdminlarimiz tekshirgach, hisobingizga pul tushadi. Iltimos kuting...`, { parse_mode: 'HTML' });
-
-    // Notify all admins
-    const adminIds = store.settings.adminIds || [];
-    // Ensure the hardcoded admin is also notified if not in the list
-    if (!adminIds.includes(8721516799)) adminIds.push(8721516799);
-
-    const kb = new InlineKeyboard()
-      .text("✅ Tasdiqlash", `admin_approve_vote_${result.reqId}`).row()
-      .text("❌ Rad etish", `admin_reject_vote_${result.reqId}`);
-
-    const caption = `🗳 <b>YANGI OVOZ SO'ROVI</b>\n\n` +
-      `👤 <b>User:</b> <a href="tg://user?id=${userId}">${ctx.from.first_name}</a> (<code>${userId}</code>)\n` +
-      `📱 <b>Nomer:</b> <code>+998${phone.slice(-9)}</code>\n` +
-      `💳 <b>Karta:</b> <code>${user.cardNumber || 'Yo\'q'}</code>\n` +
-      `🏢 <b>Loyiha:</b> ${result.project?.name}`;
-
-    for (const adminId of adminIds) {
-      try {
-        await bot.api.sendPhoto(adminId, photoId, {
-          caption,
-          parse_mode: 'HTML',
-          reply_markup: kb
-        });
-      } catch (e) {
-        console.error(`Failed to send screenshot to admin ${adminId}`, e);
-      }
-    }
+    await forwardVoteRequestToAdmins(ctx, userId, user, session, photoId);
   }
 });
