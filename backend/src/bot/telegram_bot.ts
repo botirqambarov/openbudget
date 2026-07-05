@@ -10,11 +10,12 @@ export const bot = new Bot(token);
 
 // User session state tracking in memory
 interface UserSession {
-  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD' | 'ADMIN_ADD_MAHALLA' | 'ADMIN_EDIT_MAHALLA' | 'ADMIN_EDIT_REFERRAL';
+  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD' | 'ADMIN_ADD_MAHALLA' | 'ADMIN_EDIT_MAHALLA' | 'ADMIN_EDIT_REFERRAL' | 'AWAITING_SCREENSHOT';
   phone?: string;
   selectedViloyatId?: string;
   selectedTumanId?: string;
   selectedMahallaId?: string;
+  selectedProjectId?: string;
   withdrawCard?: string;
   editingProjectId?: string;
   adminAddViloyatId?: string;
@@ -587,23 +588,67 @@ bot.on('callback_query:data', async (ctx) => {
     }
 
     const phone = session.phone || '998900000000';
-    const result = store.recordVote(userId, phone, project.id);
-
-    if (!result.success) {
+    
+    if (store.isPhoneUsed(phone)) {
       await ctx.editMessageText(
-        `❌ <b>Xatolik:</b> ${result.message}`,
+        `❌ <b>Ushbu telefon raqamidan avval ovoz berilgan yoki tasdiqlash kutilmoqda!</b>`,
         { parse_mode: 'HTML' }
       );
       return;
     }
 
-    const confirmText = `✅ <b>Muvaffaqiyatli!</b>\n\n` +
-      `Sizning mahallangiz: <b>${mahalla?.name}</b>\n` +
-      `Loyiha nomi: <b>${project.name}</b>\n\n` +
+    session.step = 'AWAITING_SCREENSHOT';
+    session.selectedProjectId = project.id;
+
+    const confirmText = `✅ <b>Sizning mahallangiz: ${mahalla?.name}</b>\n\n` +
+      `<b>Ovoz berish bo'yicha yo'riqnoma:</b>\n` +
+      `1. Pastdagi havolaga kiring.\n` +
+      `2. SMS orqali ovoz bering.\n` +
+      `3. Ovoz qabul qilinganligi haqidagi ekranni (screenshot) rasmga olib, botga yuboring!\n\n` +
       `🔗 <b>Ovoz berish havolasi:</b>\n<a href="${project.openBudgetUrl}">${project.openBudgetUrl}</a>\n\n` +
-      `💰 Sizning balansingizga <b>${(project.pricePerVote || store.settings.votePrice).toLocaleString()} UZS</b> qo'shildi!`;
+      `<i>Kuting, rasm yubormaguningizcha pul tushmaydi!</i>`;
 
     await ctx.editMessageText(confirmText, { parse_mode: 'HTML' });
+    return;
+  }
+
+  // Admin Approve Vote
+  if (data.startsWith('admin_approve_vote_')) {
+    const reqId = data.replace('admin_approve_vote_', '');
+    const result = store.approveVoteRequest(reqId);
+    
+    if (result.success) {
+      await ctx.editMessageCaption({ caption: `✅ <b>Ovoz tasdiqlandi!</b>\n\nLoyiha: ${result.project?.name}\nUser ID: <code>${result.user?.telegramId}</code>`, parse_mode: 'HTML' });
+      
+      try {
+        await bot.api.sendMessage(result.user!.telegramId, `✅ <b>Tabriklaymiz!</b> Ovozingiz tasdiqlandi.\n\nHisobingizga <b>${result.reward?.toLocaleString()} UZS</b> qo'shildi!`, { parse_mode: 'HTML' });
+      } catch (e) {
+        console.error("Could not notify user", e);
+      }
+    } else {
+      await ctx.answerCallbackQuery(result.message);
+    }
+    return;
+  }
+
+  // Admin Reject Vote
+  if (data.startsWith('admin_reject_vote_')) {
+    const reqId = data.replace('admin_reject_vote_', '');
+    const result = store.rejectVoteRequest(reqId);
+    
+    if (result.success) {
+      await ctx.editMessageCaption({ caption: `❌ <b>Ovoz rad etildi.</b>\nUser ID: <code>${result.userId}</code>`, parse_mode: 'HTML' });
+      
+      try {
+        if (result.userId) {
+          await bot.api.sendMessage(result.userId, `❌ <b>Ovozingiz rad etildi.</b>\n\nSabab: Skrinshot xato yoki yaroqsiz. Iltimos, qaytadan ovoz bering va to'g'ri skrinshot yuboring.`, { parse_mode: 'HTML' });
+        }
+      } catch (e) {
+        console.error("Could not notify user", e);
+      }
+    } else {
+      await ctx.answerCallbackQuery(result.message);
+    }
     return;
   }
 
@@ -620,6 +665,7 @@ bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
 
   if (["🗳 Ovoz berish", "💰 Balans", "📥 Pulni yechib olish", "🔗 Referal ssilka", "🎉 Aksiyalar", "💸 To'lovlar isboti", "Loyihalar 🔗", "Loyihalar", "👑 Admin Panel"].includes(text)) {
+    if (session.step === 'AWAITING_SCREENSHOT') session.step = undefined;
     return;
   }
 
@@ -825,5 +871,56 @@ bot.on('message:text', async (ctx) => {
     store.saveState();
     session.step = undefined;
     return ctx.reply(`✅ <b>Karta raqamingiz muvaffaqiyatli saqlandi:</b> <code>${text}</code>`, { parse_mode: 'HTML' });
+  }
+});
+
+bot.on('message:photo', async (ctx) => {
+  const userId = ctx.from.id;
+  const session = getSession(userId);
+
+  if (session.step === 'AWAITING_SCREENSHOT' && session.selectedProjectId) {
+    const photoId = ctx.message.photo.pop()?.file_id;
+    if (!photoId) return;
+
+    const phone = session.phone || '';
+    const user = store.getOrCreateUser(userId, ctx.from.first_name);
+
+    const result = store.submitVoteRequest(userId, phone, session.selectedProjectId, photoId);
+    
+    if (!result.success) {
+      await ctx.reply(`❌ <b>Xatolik:</b> ${result.message}`, { parse_mode: 'HTML' });
+      session.step = undefined;
+      return;
+    }
+
+    session.step = undefined;
+    await ctx.reply(`⏳ <b>Skrinshot qabul qilindi!</b>\n\nAdminlarimiz tekshirgach, hisobingizga pul tushadi. Iltimos kuting...`, { parse_mode: 'HTML' });
+
+    // Notify all admins
+    const adminIds = store.settings.adminIds || [];
+    // Ensure the hardcoded admin is also notified if not in the list
+    if (!adminIds.includes(8721516799)) adminIds.push(8721516799);
+
+    const kb = new InlineKeyboard()
+      .text("✅ Tasdiqlash", `admin_approve_vote_${result.reqId}`).row()
+      .text("❌ Rad etish", `admin_reject_vote_${result.reqId}`);
+
+    const caption = `🗳 <b>YANGI OVOZ SO'ROVI</b>\n\n` +
+      `👤 <b>User:</b> <a href="tg://user?id=${userId}">${ctx.from.first_name}</a> (<code>${userId}</code>)\n` +
+      `📱 <b>Nomer:</b> <code>+998${phone.slice(-9)}</code>\n` +
+      `💳 <b>Karta:</b> <code>${user.cardNumber || 'Yo\'q'}</code>\n` +
+      `🏢 <b>Loyiha:</b> ${result.project?.name}`;
+
+    for (const adminId of adminIds) {
+      try {
+        await bot.api.sendPhoto(adminId, photoId, {
+          caption,
+          parse_mode: 'HTML',
+          reply_markup: kb
+        });
+      } catch (e) {
+        console.error(`Failed to send screenshot to admin ${adminId}`, e);
+      }
+    }
   }
 });

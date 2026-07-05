@@ -39,6 +39,16 @@ export interface VoteRecord {
   createdAt: string;
 }
 
+export interface PendingVoteRequest {
+  id: string;
+  userId: number;
+  phone: string;
+  projectId: string;
+  photoId: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  createdAt: string;
+}
+
 export interface WithdrawalRecord {
   id: string;
   userId: number;
@@ -64,6 +74,7 @@ class StoreService {
   public projects: ProjectData[] = [];
   public users: Map<number, UserData> = new Map();
   public votes: VoteRecord[] = [];
+  public pendingVotes: PendingVoteRequest[] = [];
   public usedPhones: Set<string> = new Set();
   public withdrawals: WithdrawalRecord[] = [];
   public settings: SystemSettings = {
@@ -151,6 +162,7 @@ class StoreService {
         projects: this.projects,
         users: Array.from(this.users.entries()),
         votes: this.votes,
+        pendingVotes: this.pendingVotes,
         usedPhones: Array.from(this.usedPhones),
         withdrawals: this.withdrawals,
         settings: this.settings,
@@ -170,6 +182,7 @@ class StoreService {
         if (data.projects) this.projects = data.projects;
         if (data.users) this.users = new Map(data.users);
         if (data.votes) this.votes = data.votes;
+        if (data.pendingVotes) this.pendingVotes = data.pendingVotes;
         if (data.usedPhones) this.usedPhones = new Set(data.usedPhones);
         if (data.withdrawals) this.withdrawals = data.withdrawals;
         if (data.settings) this.settings = { ...this.settings, ...data.settings };
@@ -201,14 +214,17 @@ class StoreService {
   }
 
   public isPhoneUsed(phone: string): boolean {
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    return this.usedPhones.has(cleanPhone);
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-9);
+    for (const used of this.usedPhones) {
+      if (used.slice(-9) === cleanPhone) return true;
+    }
+    return this.pendingVotes.some(req => req.status === 'PENDING' && req.phone === cleanPhone);
   }
 
-  public recordVote(userId: number, phone: string, projectId: string): { success: boolean; message: string; project?: ProjectData } {
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    if (this.usedPhones.has(cleanPhone)) {
-      return { success: false, message: 'Ushbu telefon raqamidan avval ovoz berilgan!' };
+  public submitVoteRequest(userId: number, phone: string, projectId: string, photoId: string): { success: boolean; message: string; reqId?: string; project?: ProjectData } {
+    const cleanPhone = phone.replace(/[^0-9]/g, '').slice(-9);
+    if (this.isPhoneUsed(phone)) {
+      return { success: false, message: 'Ushbu telefon raqamidan avval ovoz berilgan yoki tasdiqlash kutilmoqda!' };
     }
 
     const project = this.projects.find(p => p.id === projectId);
@@ -220,33 +236,48 @@ class StoreService {
       return { success: false, message: "Ushbu loyiha uchun ovoz yig'ish to'xtatilgan!" };
     }
 
-    if (project.currentVotes >= project.autoStopLimit) {
-      project.isActive = false;
-      this.saveState();
-      return { success: false, message: "Loyiha limitiga yetdi va ovoz yig'ish to'xtatildi!" };
-    }
-
-    this.usedPhones.add(cleanPhone);
-    project.currentVotes += 1;
-
-    // Record vote log
-    const vote: VoteRecord = {
-      id: 'v_' + Date.now(),
+    const reqId = 'req_' + Date.now();
+    this.pendingVotes.push({
+      id: reqId,
       userId,
       phone: cleanPhone,
       projectId,
+      photoId,
+      status: 'PENDING',
+      createdAt: new Date().toISOString()
+    });
+
+    this.saveState();
+    return { success: true, message: 'So\'rov muvaffaqiyatli qabul qilindi!', reqId, project };
+  }
+
+  public approveVoteRequest(reqId: string): { success: boolean; message: string; project?: ProjectData; user?: UserData; reward?: number } {
+    const req = this.pendingVotes.find(r => r.id === reqId);
+    if (!req || req.status !== 'PENDING') return { success: false, message: "So'rov topilmadi yoki avval ko'rib chiqilgan." };
+
+    const project = this.projects.find(p => p.id === req.projectId);
+    if (!project) return { success: false, message: "Loyiha topilmadi." };
+
+    req.status = 'APPROVED';
+    this.usedPhones.add(req.phone);
+    project.currentVotes += 1;
+
+    const vote: VoteRecord = {
+      id: 'v_' + Date.now(),
+      userId: req.userId,
+      phone: req.phone,
+      projectId: req.projectId,
       createdAt: new Date().toISOString()
     };
     this.votes.push(vote);
 
-    // Reward user for voting
-    const user = this.users.get(userId);
+    let reward = project.pricePerVote || this.settings.votePrice;
+    const user = this.users.get(req.userId);
     if (user) {
-      user.phone = cleanPhone;
-      user.mainBalance += project.pricePerVote || this.settings.votePrice;
-      user.totalEarned += project.pricePerVote || this.settings.votePrice;
+      user.phone = req.phone;
+      user.mainBalance += reward;
+      user.totalEarned += reward;
 
-      // Handle referral bonus
       if (user.referrerId) {
         const referrer = this.users.get(user.referrerId);
         if (referrer) {
@@ -257,13 +288,21 @@ class StoreService {
       }
     }
 
-    // Auto stop check
     if (project.currentVotes >= project.autoStopLimit) {
       project.isActive = false;
     }
 
     this.saveState();
-    return { success: true, message: 'Ovoz muvaffaqiyatli qabul qilindi!', project };
+    return { success: true, message: "Ovoz tasdiqlandi!", project, user, reward };
+  }
+
+  public rejectVoteRequest(reqId: string): { success: boolean; message: string; userId?: number } {
+    const req = this.pendingVotes.find(r => r.id === reqId);
+    if (!req || req.status !== 'PENDING') return { success: false, message: "So'rov topilmadi yoki avval ko'rib chiqilgan." };
+
+    req.status = 'REJECTED';
+    this.saveState();
+    return { success: true, message: "So'rov rad etildi.", userId: req.userId };
   }
 
   public getProjectByMahalla(mahallaId: string): ProjectData | undefined {
