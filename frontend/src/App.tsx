@@ -29,6 +29,7 @@ interface ProjectData {
   name: string;
   openBudgetUrl: string;
   telegramBotUrl: string;
+  pricePerVote: number;
   autoStopLimit: number;
   currentVotes: number;
   isActive: boolean;
@@ -80,6 +81,7 @@ export default function App() {
       name: 'Shifokor (Shahzod Ochildiyev)',
       openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/1',
       telegramBotUrl: 'https://t.me/openbudget_navoiy_bot',
+      pricePerVote: 5000,
       autoStopLimit: 5000,
       currentVotes: 931,
       isActive: true
@@ -89,6 +91,7 @@ export default function App() {
       name: "Ilg'or (Sherzod Abdiyev)",
       openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/2',
       telegramBotUrl: 'https://t.me/openbudget_ilgor_bot',
+      pricePerVote: 5000,
       autoStopLimit: 5000,
       currentVotes: 429,
       isActive: true
@@ -98,6 +101,7 @@ export default function App() {
       name: 'Sebiston (Bohodir Jonuzoqov)',
       openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/3',
       telegramBotUrl: 'https://t.me/openbudget_sebiston1_bot',
+      pricePerVote: 5000,
       autoStopLimit: 5000,
       currentVotes: 57,
       isActive: true
@@ -294,6 +298,7 @@ export default function App() {
                   <th>Loyiha Nomi</th>
                   <th>Open Budget Ssilka</th>
                   <th>Telegram Bot Link</th>
+                  <th>Ovoz Narxi</th>
                   <th>Progress</th>
                   <th>Holat</th>
                   <th>Amallar</th>
@@ -307,6 +312,7 @@ export default function App() {
                       <td><b>{p.name}</b></td>
                       <td><a href={p.openBudgetUrl} target="_blank" style={{ color: '#6366f1' }}>Havola</a></td>
                       <td><a href={p.telegramBotUrl} target="_blank" style={{ color: '#6366f1' }}>Bot Link</a></td>
+                      <td style={{ color: '#10b981', fontWeight: 600 }}>{p.pricePerVote.toLocaleString()} UZS</td>
                       <td style={{ width: '180px' }}>
                         <div style={{ fontSize: '0.8rem', marginBottom: '4px' }}>{p.currentVotes} / {p.autoStopLimit} ({percent}%)</div>
                         <div style={{ height: '6px', background: '#334155', borderRadius: '4px', overflow: 'hidden' }}>

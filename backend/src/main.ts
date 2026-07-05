@@ -36,13 +36,14 @@ app.get('/api/projects', (req, res) => {
 });
 
 app.post('/api/projects', (req, res) => {
-  const { id, name, viloyatId, tumanId, mahallaId, openBudgetUrl, autoStopLimit } = req.body;
+  const { id, name, viloyatId, tumanId, mahallaId, openBudgetUrl, autoStopLimit, pricePerVote } = req.body;
   
   let project = store.projects.find(p => p.id === id);
   if (project) {
     if (name) project.name = name;
     if (openBudgetUrl) project.openBudgetUrl = openBudgetUrl;
     if (autoStopLimit) project.autoStopLimit = Number(autoStopLimit);
+    if (pricePerVote) project.pricePerVote = Number(pricePerVote);
   } else {
     project = {
       id: 'p_' + Date.now(),
@@ -52,6 +53,7 @@ app.post('/api/projects', (req, res) => {
       mahallaId: mahallaId || 'm_karmana_1',
       openBudgetUrl: openBudgetUrl || 'https://openbudget.uz',
       telegramBotUrl: 'https://t.me/openbudget_bot',
+      pricePerVote: Number(pricePerVote) || 5000,
       autoStopLimit: Number(autoStopLimit) || 5000,
       currentVotes: 0,
       isActive: true,

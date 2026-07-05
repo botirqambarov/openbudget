@@ -9,6 +9,7 @@ export interface ProjectData {
   mahallaId: string;
   openBudgetUrl: string;
   telegramBotUrl: string;
+  pricePerVote: number;
   autoStopLimit: number;
   currentVotes: number;
   isActive: boolean;
@@ -20,6 +21,7 @@ export interface UserData {
   firstName: string;
   username?: string;
   phone?: string;
+  cardNumber?: string;
   mainBalance: number;
   pendingBalance: number;
   referralEarned: number;
@@ -88,6 +90,7 @@ class StoreService {
         mahallaId: 'm_navoiy_sh_1',
         openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/1',
         telegramBotUrl: 'https://t.me/openbudget_navoiy_bot',
+        pricePerVote: 5000,
         autoStopLimit: 5000,
         currentVotes: 931,
         isActive: true,
@@ -101,6 +104,7 @@ class StoreService {
         mahallaId: 'm_navoiy_sh_2',
         openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/2',
         telegramBotUrl: 'https://t.me/openbudget_ilgor_bot',
+        pricePerVote: 5000,
         autoStopLimit: 5000,
         currentVotes: 429,
         isActive: true,
@@ -114,6 +118,7 @@ class StoreService {
         mahallaId: 'm_karmana_1',
         openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/3',
         telegramBotUrl: 'https://t.me/openbudget_sebiston1_bot',
+        pricePerVote: 5000,
         autoStopLimit: 5000,
         currentVotes: 57,
         isActive: true,
@@ -127,6 +132,7 @@ class StoreService {
         mahallaId: 'm_karmana_2',
         openBudgetUrl: 'https://openbudget.uz/boards/initiatives/initiative/4',
         telegramBotUrl: 'https://t.me/openbudget_sebiston2_bot',
+        pricePerVote: 5000,
         autoStopLimit: 5000,
         currentVotes: 120,
         isActive: true,
@@ -231,8 +237,8 @@ class StoreService {
     const user = this.users.get(userId);
     if (user) {
       user.phone = cleanPhone;
-      user.mainBalance += this.settings.votePrice;
-      user.totalEarned += this.settings.votePrice;
+      user.mainBalance += project.pricePerVote || this.settings.votePrice;
+      user.totalEarned += project.pricePerVote || this.settings.votePrice;
 
       // Handle referral bonus
       if (user.referrerId) {

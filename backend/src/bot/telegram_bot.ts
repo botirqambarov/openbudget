@@ -11,7 +11,7 @@ export const bot = new Bot(token);
 
 // User session state tracking in memory
 interface UserSession {
-  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL';
+  step?: 'ENTER_PHONE' | 'SELECT_VILOYAT' | 'SELECT_TUMAN' | 'SELECT_MAHALLA' | 'WITHDRAW_CARD' | 'WITHDRAW_AMOUNT' | 'ADMIN_ADD_LINK' | 'ADMIN_ADD_PRICE' | 'ADMIN_EDIT_NAME' | 'ADMIN_EDIT_AUTOSTOP' | 'ADMIN_EDIT_BOT_URL' | 'USER_ADD_CARD';
   phone?: string;
   selectedViloyatId?: string;
   selectedTumanId?: string;
@@ -21,6 +21,7 @@ interface UserSession {
   adminAddViloyatId?: string;
   adminAddTumanId?: string;
   adminAddMahallaId?: string;
+  adminAddOpenBudgetUrl?: string;
 }
 
 const sessions = new Map<number, UserSession>();
@@ -204,9 +205,13 @@ bot.hears("💰 Balans", async (ctx) => {
     `💵 Asosiy balans: <b>${user.mainBalance.toLocaleString()} UZS</b>\n` +
     `⏳ Kutayotgan balans: <b>${user.pendingBalance.toLocaleString()} UZS</b>\n` +
     `👥 Referaldan topilgan: <b>${user.referralEarned.toLocaleString()} UZS</b>\n` +
-    `🏆 Jami ishlab topilgan: <b>${user.totalEarned.toLocaleString()} UZS</b>`;
+    `🏆 Jami ishlab topilgan: <b>${user.totalEarned.toLocaleString()} UZS</b>\n\n` +
+    `💳 Biriktirilgan karta: <b>${user.cardNumber ? user.cardNumber : 'Kiritilmagan'}</b>`;
 
-  await ctx.reply(text, { parse_mode: 'HTML' });
+  const kb = new InlineKeyboard()
+    .text("💳 Karta raqamini kiritish", "user_add_card");
+
+  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 });
 
 bot.hears("🔗 Referal ssilka", async (ctx) => {
@@ -238,6 +243,19 @@ bot.hears("📥 Pulni yechib olish", async (ctx) => {
   }
 
   const session = getSession(userId);
+
+  if (user.cardNumber) {
+    session.step = 'WITHDRAW_AMOUNT';
+    session.withdrawCard = user.cardNumber;
+    return ctx.reply(
+      `💳 <b>Saqlangan kartangiz: ${user.cardNumber}</b>\n\n` +
+      `💵 <b>Yechib olmoqchi bo'lgan summangizni kiriting:</b>\n\n` +
+      `Mavjud balans: <b>${user.mainBalance.toLocaleString()} UZS</b>\n` +
+      `Min limit: <b>${store.settings.minWithdrawal.toLocaleString()} UZS</b>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
   session.step = 'WITHDRAW_CARD';
 
   await ctx.reply(
@@ -269,6 +287,13 @@ bot.on('callback_query:data', async (ctx) => {
   const session = getSession(userId);
 
   await ctx.answerCallbackQuery();
+
+  // User: Add/Edit Card
+  if (data === 'user_add_card') {
+    session.step = 'USER_ADD_CARD';
+    await ctx.reply(`💳 <b>Yangi karta raqamingizni kiriting:</b>\n\nMisol: <code>8600123456789012</code>`, { parse_mode: 'HTML' });
+    return;
+  }
 
   // Admin: View Projects List (Screenshot 2 Bottom Message)
   if (data === 'admin_projects_list') {
@@ -515,7 +540,7 @@ bot.on('callback_query:data', async (ctx) => {
       `Sizning mahallangiz: <b>${mahalla?.name}</b>\n` +
       `Loyiha nomi: <b>${project.name}</b>\n\n` +
       `🔗 <b>Ovoz berish havolasi:</b>\n<a href="${project.openBudgetUrl}">${project.openBudgetUrl}</a>\n\n` +
-      `💰 Sizning balansingizga <b>${store.settings.votePrice.toLocaleString()} UZS</b> qo'shildi!`;
+      `💰 Sizning balansingizga <b>${(project.pricePerVote || store.settings.votePrice).toLocaleString()} UZS</b> qo'shildi!`;
 
     await ctx.editMessageText(confirmText, { parse_mode: 'HTML' });
     return;
@@ -657,6 +682,23 @@ bot.on('message:text', async (ctx) => {
 
   // Step: ADMIN_ADD_LINK
   if (session.step === 'ADMIN_ADD_LINK') {
+    session.adminAddOpenBudgetUrl = text;
+    session.step = 'ADMIN_ADD_PRICE';
+
+    return ctx.reply(
+      `💰 <b>Ushbu loyiha uchun 1 ta tasdiqlangan ovoz narxini kiriting:</b>\n\n` +
+      `Masalan: <code>5000</code>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  // Step: ADMIN_ADD_PRICE
+  if (session.step === 'ADMIN_ADD_PRICE') {
+    const price = Number(text);
+    if (isNaN(price) || price < 0) {
+      return ctx.reply("⚠️ Iltimos, faqat raqam kiriting (masalan: 5000)!");
+    }
+
     const mahalla = findMahalla(session.adminAddViloyatId!, session.adminAddTumanId!, session.adminAddMahallaId!);
     
     const newProj: ProjectData = {
@@ -665,8 +707,9 @@ bot.on('message:text', async (ctx) => {
       viloyatId: session.adminAddViloyatId!,
       tumanId: session.adminAddTumanId!,
       mahallaId: session.adminAddMahallaId!,
-      openBudgetUrl: text,
+      openBudgetUrl: session.adminAddOpenBudgetUrl!,
       telegramBotUrl: `https://t.me/${ctx.me.username}`,
+      pricePerVote: price,
       autoStopLimit: 5000,
       currentVotes: 0,
       isActive: true,
@@ -680,8 +723,21 @@ bot.on('message:text', async (ctx) => {
     return ctx.reply(
       `✅ <b>Yangi loyiha muvaffaqiyatli biriktirildi!</b>\n\n` +
       `Loyiha nomi: <b>${newProj.name}</b>\n` +
+      `Ovoz narxi: <b>${price.toLocaleString()} UZS</b>\n` +
       `OpenBudget Havola: ${newProj.openBudgetUrl}`,
       { parse_mode: 'HTML' }
     );
+  }
+
+  // Step: USER_ADD_CARD
+  if (session.step === 'USER_ADD_CARD') {
+    if (text.length < 16) {
+      return ctx.reply("⚠️ Karta raqami kamida 16 ta raqamdan iborat bo'lishi kerak!");
+    }
+    const user = store.getOrCreateUser(userId, ctx.from.first_name);
+    user.cardNumber = text;
+    store.saveState();
+    session.step = undefined;
+    return ctx.reply(`✅ <b>Karta raqamingiz muvaffaqiyatli saqlandi:</b> <code>${text}</code>`, { parse_mode: 'HTML' });
   }
 });
